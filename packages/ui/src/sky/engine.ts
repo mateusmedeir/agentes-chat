@@ -161,8 +161,7 @@ function schedule() {
   timer = setTimeout(
     () => {
       timer = 0;
-      if (hasRaf()) raf = requestAnimationFrame(tick);
-      else tick(performance.now());
+      raf = requestAnimationFrame(tick);
     },
     Math.max(0, SKY_FRAME_MS - (performance.now() - last)),
   );
@@ -176,7 +175,7 @@ function tick(now: number) {
   if ([...live].some((s) => s.wanted())) schedule();
 }
 function wake() {
-  if (timer || raf) return;
+  if (timer || raf || !hasRaf()) return;
   last = performance.now();
   schedule();
 }

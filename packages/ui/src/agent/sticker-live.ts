@@ -90,12 +90,12 @@ function cancelLoop() {
  * view, or with reduced motion, no frame is asked for; `start` brings the loop back.
  */
 function schedule() {
+  if (typeof requestAnimationFrame !== "function") return;
   if (timer || raf || reduced() || !anyVisible()) return;
   timer = setTimeout(
     () => {
       timer = 0;
-      if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(tick);
-      else tick(stickerNow() * 1000);
+      raf = requestAnimationFrame(tick);
     },
     Math.max(0, FRAME_MS - (stickerNow() * 1000 - last)),
   );
