@@ -33,8 +33,10 @@ const TAG_FIELDS: Record<string, string> = {
  * Minimal structured logger: one JSON object per line on stdout, which every
  * log collector understands without configuration. `format` `gcp` names the
  * level `severity` and the text `message` (`WARNING` for `warn`), the two
- * fields Google Cloud Logging reads; `json` keeps `level` and `msg`. An error
- * line that carries what was thrown (`error`) is also reported to `errors`
+ * fields Google Cloud Logging reads, and puts the stack of a thrown `Error` in
+ * `stack_trace`, the field its Error Reporting reads; they come after the log's
+ * own fields, so none of those can replace them. `json` keeps `level` and `msg`.
+ * An error line that carries what was thrown (`error`) is also reported to `errors`
  * (ADR 0104), tagged with its `TAG_FIELDS`; `unhandled: true` says nothing
  * caught it.
  */
@@ -47,8 +49,19 @@ export function createLogger(
     if (order[level] >= order[minLevel]) {
       const thrown = fields && "error" in fields ? { error: String(fields.error) } : {};
       const time = new Date().toISOString();
-      const head = format === "gcp" ? { time, severity: SEVERITY[level], message: msg } : { time, level, msg };
-      const line = JSON.stringify({ ...head, ...fields, ...thrown });
+      const stack = fields?.error instanceof Error ? fields.error.stack : undefined;
+      const line = JSON.stringify(
+        format === "gcp"
+          ? {
+              time,
+              ...fields,
+              ...thrown,
+              severity: SEVERITY[level],
+              message: msg,
+              ...(typeof stack === "string" ? { stack_trace: stack } : {}),
+            }
+          : { time, level, msg, ...fields, ...thrown },
+      );
       (level === "error" ? console.error : console.log)(line);
     }
     if (level !== "error" || !fields || !("error" in fields)) return;

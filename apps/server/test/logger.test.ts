@@ -60,4 +60,33 @@ describe("logger", () => {
     expect(errors.reports[0]?.error).toBe(boom);
     expect(errors.reports[0]?.tags.job).toBe("x");
   });
+
+  test("a gcp error carries its stack as stack_trace and keeps the short message", () => {
+    const boom = new Error("boom");
+    createLogger("info", undefined, "gcp").error("job failed", { error: boom });
+    const [line] = written(err);
+    expect(line.stack_trace).toBe(boom.stack);
+    expect(line.message).toBe("job failed");
+    expect(line.error).toBe("Error: boom");
+  });
+
+  test("a gcp error that is not an Error has no stack_trace", () => {
+    createLogger("info", undefined, "gcp").error("job failed", { error: "text" });
+    const [line] = written(err);
+    expect("stack_trace" in line).toBe(false);
+    expect(line.error).toBe("text");
+  });
+
+  test("the json format never writes stack_trace", () => {
+    createLogger("info").error("job failed", { error: new Error("boom") });
+    const [line] = written(err);
+    expect("stack_trace" in line).toBe(false);
+  });
+
+  test("gcp fields named severity or message do not replace the level or the text", () => {
+    createLogger("info", undefined, "gcp").info("booted", { severity: "x", message: "y" });
+    const [line] = written(out);
+    expect(line.severity).toBe("INFO");
+    expect(line.message).toBe("booted");
+  });
 });
