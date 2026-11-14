@@ -8,6 +8,8 @@ export const FREEZE_MS = 5000;
 
 export interface FreezeWatchOptions {
   logLevel: "debug" | "info" | "warn" | "error";
+  /** The shape of its log lines (`LOG_FORMAT`), the same as the main thread's. */
+  logFormat?: "json" | "gcp";
   /** Where the error goes besides the log (`SENTRY_DSN`); absent: the log line only. */
   reports?: { dsn: string; environment: string; release: string };
   freezeMs?: number;

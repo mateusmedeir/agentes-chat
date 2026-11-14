@@ -4,6 +4,9 @@ import { type ErrorReporter, type ErrorTags, noErrorReports } from "@agenteschat
 type Level = "debug" | "info" | "warn" | "error";
 const order: Record<Level, number> = { debug: 10, info: 20, warn: 30, error: 40 };
 
+/** The names Google Cloud Logging gives its severities. */
+const SEVERITY: Record<Level, string> = { debug: "DEBUG", info: "INFO", warn: "WARNING", error: "ERROR" };
+
 /** Log fields a reported error takes as tags (internal ids and what was running), under these names. */
 const TAG_FIELDS: Record<string, string> = {
   orgId: "org_id",
@@ -28,15 +31,21 @@ const TAG_FIELDS: Record<string, string> = {
 
 /**
  * Minimal structured logger: one JSON object per line on stdout, which every
- * log collector understands without configuration. An error line that carries
+ * log collector understands without configuration. `format` `gcp` names the
+ * level `severity` and the text `message` (`WARNING` for `warn`), the two
+ * fields Google Cloud Logging reads; `json` keeps `level` and `msg`. An error line that carries
  * what was thrown (`error`) is also reported to `errors` (ADR 0104), tagged with
  * its `TAG_FIELDS`; `unhandled: true` says nothing caught it.
  */
-export function createLogger(minLevel: Level, errors: ErrorReporter = noErrorReports) {
+export function createLogger(minLevel: Level, errors: ErrorReporter = noErrorReports,
+  format: "json" | "gcp" = "json",
+) {
   const log = (level: Level, msg: string, fields?: Record<string, unknown>) => {
     if (order[level] >= order[minLevel]) {
       const thrown = fields && "error" in fields ? { error: String(fields.error) } : {};
-      const line = JSON.stringify({ time: new Date().toISOString(), level, msg, ...fields, ...thrown });
+      const time = new Date().toISOString();
+      const head = format === "gcp" ? { time, severity: SEVERITY[level], message: msg } : { time, level, msg };
+      const line = JSON.stringify({ ...head, ...fields, ...thrown });
       (level === "error" ? console.error : console.log)(line);
     }
     if (level !== "error" || !fields || !("error" in fields)) return;
