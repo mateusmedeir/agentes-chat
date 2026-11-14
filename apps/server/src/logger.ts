@@ -33,11 +33,14 @@ const TAG_FIELDS: Record<string, string> = {
  * Minimal structured logger: one JSON object per line on stdout, which every
  * log collector understands without configuration. `format` `gcp` names the
  * level `severity` and the text `message` (`WARNING` for `warn`), the two
- * fields Google Cloud Logging reads; `json` keeps `level` and `msg`. An error line that carries
- * what was thrown (`error`) is also reported to `errors` (ADR 0104), tagged with
- * its `TAG_FIELDS`; `unhandled: true` says nothing caught it.
+ * fields Google Cloud Logging reads; `json` keeps `level` and `msg`. An error
+ * line that carries what was thrown (`error`) is also reported to `errors`
+ * (ADR 0104), tagged with its `TAG_FIELDS`; `unhandled: true` says nothing
+ * caught it.
  */
-export function createLogger(minLevel: Level, errors: ErrorReporter = noErrorReports,
+export function createLogger(
+  minLevel: Level,
+  errors: ErrorReporter = noErrorReports,
   format: "json" | "gcp" = "json",
 ) {
   const log = (level: Level, msg: string, fields?: Record<string, unknown>) => {
