@@ -40,11 +40,7 @@ const TAG_FIELDS: Record<string, string> = {
  * (ADR 0104), tagged with its `TAG_FIELDS`; `unhandled: true` says nothing
  * caught it.
  */
-export function createLogger(
-  minLevel: Level,
-  errors: ErrorReporter = noErrorReports,
-  format: "json" | "gcp" = "json",
-) {
+export function createLogger(minLevel: Level, errors: ErrorReporter = noErrorReports, format: "json" | "gcp" = "json") {
   const log = (level: Level, msg: string, fields?: Record<string, unknown>) => {
     if (order[level] >= order[minLevel]) {
       const thrown = fields && "error" in fields ? { error: String(fields.error) } : {};
