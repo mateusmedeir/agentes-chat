@@ -104,16 +104,17 @@ export function canvasPage({
   const now = spyOn(performance, "now").mockImplementation(() => clock);
   let still = reduced;
   const heard = new Set<() => void>();
-  const media = spyOn(window, "matchMedia").mockImplementation(
-    (query: string) =>
-      ({
-        get matches() {
-          return still && query.includes("reduce");
-        },
-        addEventListener: (_: string, cb: () => void) => heard.add(cb),
-        removeEventListener: (_: string, cb: () => void) => heard.delete(cb),
-      }) as unknown as MediaQueryList,
-  );
+  const fakeMedia = (query: string) =>
+    ({
+      get matches() {
+        return still && query.includes("reduce");
+      },
+      addEventListener: (_: string, cb: () => void) => heard.add(cb),
+      removeEventListener: (_: string, cb: () => void) => heard.delete(cb),
+    }) as unknown as MediaQueryList;
+  // In the test DOM the global `matchMedia` and the window's are different functions, so both are replaced.
+  const media = spyOn(window, "matchMedia").mockImplementation(fakeMedia);
+  const globalMedia = spyOn(globalThis as unknown as Window, "matchMedia").mockImplementation(fakeMedia);
   const host = document.createElement("div");
   const canvas = document.createElement("canvas");
   host.append(canvas);
@@ -188,6 +189,7 @@ export function canvasPage({
       for (const t of timers.values()) realClear(t.real);
       timers.clear();
       now.mockRestore();
+      globalMedia.mockRestore();
       media.mockRestore();
       Object.assign(g, saved);
     },
