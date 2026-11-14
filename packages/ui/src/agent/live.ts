@@ -333,14 +333,14 @@ function cancelLoop() {
  * asked for; `start` brings the loop back.
  */
 function schedule() {
+  if (typeof requestAnimationFrame !== "function") return;
   if (timer || raf || reduced() || !anyVisible()) return;
   let working = false;
   for (const a of agents) if (visible.has(a.box) && busy(a)) working = true;
   timer = setTimeout(
     () => {
       timer = 0;
-      if (typeof requestAnimationFrame === "function") raf = requestAnimationFrame(tick);
-      else tick(clock());
+      raf = requestAnimationFrame(tick);
     },
     Math.max(0, (working ? ACTIVE_MS : REST_MS) - (clock() - last)),
   );
