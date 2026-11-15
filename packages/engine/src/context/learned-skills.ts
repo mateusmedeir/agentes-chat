@@ -346,8 +346,17 @@ async function checkedNewSkill(
         gt(agentActions.createdAt, new Date(Date.now() - 24 * 3600_000)),
       ),
     );
+  // New skills still waiting on a card count too, but only where `made` counts: this run's, and the last day's.
+  const [run] = await ctx.db
+    .select({ at: agentRuns.createdAt })
+    .from(agentRuns)
+    .where(and(eq(agentRuns.orgId, ctx.orgId), eq(agentRuns.id, ctx.runId)));
+  const since = run?.at ?? new Date();
   const [asked] = await ctx.db
-    .select({ n: sql<number>`count(*)::int` })
+    .select({
+      run: sql<number>`count(*) filter (where ${schema.contextProposals.createdAt} >= ${since})::int`,
+      day: sql<number>`count(*)::int`,
+    })
     .from(schema.contextProposals)
     .where(
       and(
@@ -356,12 +365,12 @@ async function checkedNewSkill(
         eq(schema.contextProposals.status, "pending"),
         eq(schema.contextProposals.proposedByAgentId, ctx.agentId),
         sql`${schema.contextProposals.access}->0->>'id' = ''`,
+        gt(schema.contextProposals.createdAt, new Date(Date.now() - 24 * 3600_000)),
       ),
     );
-  const waiting = asked?.n ?? 0;
-  if ((made?.run ?? 0) + waiting >= SKILL_CREATE_LIMITS.perRun)
+  if ((made?.run ?? 0) + (asked?.run ?? 0) >= SKILL_CREATE_LIMITS.perRun)
     throw new ValidationError("You already made skills in this turn: put the rest in one of them with update_skill.");
-  if ((made?.day ?? 0) + waiting >= SKILL_CREATE_LIMITS.perDay)
+  if ((made?.day ?? 0) + (asked?.day ?? 0) >= SKILL_CREATE_LIMITS.perDay)
     throw new ValidationError("You made enough skills today: save this one with save_how_to and make it tomorrow.");
   return { name, description, body, owner };
 }

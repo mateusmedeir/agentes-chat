@@ -877,7 +877,7 @@ async function createdFromProposal(db: Database, actorId: string, p: Proposal) {
       agentId: p.agentId,
       channelId: card.channelId,
       messageId: card.messageId,
-      requestedByUserId: actorId,
+      requestedByUserId: p.requestedByUserId ?? actorId,
       kind: "skill.created",
       targetType: "skill",
       targetId: skill.id,

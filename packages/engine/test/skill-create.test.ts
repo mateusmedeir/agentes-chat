@@ -222,6 +222,21 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     expect(await waiting()).toHaveLength(SKILL_CREATE_LIMITS.perRun);
   });
 
+  test("proposals left waiting before this run do not block a clean run from making a skill", async () => {
+    f = await setup({ skillTools: true });
+    const read = await outsideRun(f);
+    for (let i = 0; i < SKILL_CREATE_LIMITS.perRun; i++) await invoke(read, "create_skill", skill(`old-${i}`));
+    expect(await waiting()).toHaveLength(SKILL_CREATE_LIMITS.perRun);
+    await f.db
+      .update(schema.contextProposals)
+      .set({ createdAt: new Date(Date.now() - 2 * 3600_000) })
+      .where(eq(schema.contextProposals.target, "skill"));
+
+    const out = await invoke(await personRun(f), "create_skill", skill("weekly-report"));
+    expect(out.isError).toBeFalsy();
+    expect(out.content).toContain("Created the skill weekly-report");
+  });
+
   test("where skills are personal, outside content still refuses", async () => {
     f = await setup({ skillTools: true });
     await addMember(f.db, f.org.id, "member");
