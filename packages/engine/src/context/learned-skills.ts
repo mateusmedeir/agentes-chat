@@ -346,15 +346,11 @@ async function checkedNewSkill(
         gt(agentActions.createdAt, new Date(Date.now() - 24 * 3600_000)),
       ),
     );
-  // New skills still waiting on a card count too, but only where `made` counts: this run's, and the last day's.
-  const [run] = await ctx.db
-    .select({ at: agentRuns.createdAt })
-    .from(agentRuns)
-    .where(and(eq(agentRuns.orgId, ctx.orgId), eq(agentRuns.id, ctx.runId)));
-  const since = run?.at ?? new Date();
+  // New skills still waiting on a card count too, where `made` counts: this run's own (each names its run), and the
+  // last day's.
   const [asked] = await ctx.db
     .select({
-      run: sql<number>`count(*) filter (where ${schema.contextProposals.createdAt} >= ${since})::int`,
+      run: sql<number>`count(*) filter (where ${schema.contextProposals.access}->0->>'runId' = ${ctx.runId})::int`,
       day: sql<number>`count(*)::int`,
     })
     .from(schema.contextProposals)
@@ -387,7 +383,15 @@ export async function proposeSkillAsAgent(
   requesterId?: string | null,
 ) {
   const { name, description, body } = await checkedNewSkill(deps, ctx, input, "card");
-  return proposeNewSkill(deps, { orgId: ctx.orgId, agentId: ctx.agentId, name, description, body, requesterId });
+  return proposeNewSkill(deps, {
+    orgId: ctx.orgId,
+    agentId: ctx.agentId,
+    name,
+    description,
+    body,
+    requesterId,
+    runId: ctx.runId,
+  });
 }
 
 /**
@@ -395,7 +399,8 @@ export async function proposeSkillAsAgent(
  * agent's own, as one promoted from its how-tos (`origin agent`, `owner_agent_id`, on for that agent only, archived when
  * unused), at once, with a `skill.created` receipt (Desfazer) that says a person asked. People give it to other agents
  * in Skills. At once only in a person's run that read nothing from outside (`learnTrust` high), since a skill loads as
- * trusted instructions; after outside content it is a card instead (`proposeSkillAsAgent`). The body alone, its text files later through `update_skill`; never credentials or permission rules.
+ * trusted instructions. The body alone, its text files later through `update_skill`; never credentials or permission
+ * rules.
  * Where skills are the team's and each person's (`personalSkillsOn`), it is the personal skill of `person`, who asked.
  */
 export async function createSkillAsAgent(

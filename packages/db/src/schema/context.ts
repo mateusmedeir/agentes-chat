@@ -192,6 +192,8 @@ export interface ProposedAccessLine {
   /** Its name when proposed (the connection's label, the scope's English label). */
   label: string;
   on: boolean;
+  /** A new skill's proposal only: the run that proposed it, so a run counts its own cards and not another's. */
+  runId?: string;
 }
 
 /**

@@ -159,7 +159,20 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     await invoke(read, "create_skill", skill("weekly-report"));
     expect(await waiting()).toHaveLength(1);
 
-    await decideProposal(f.db, f.owner.id, f.org.id, p?.id ?? "", "accept", {});
+    // The reply that shows the card, as the run posts it at its end; someone else than the requester decides.
+    const card = await insertMessage(f.db, {
+      orgId: f.org.id,
+      channelId: f.general.id,
+      author: { type: "agent", agentId: f.agent.id, runId: read.id, hop: 1 },
+      body: "Proposed",
+      meta: {
+        memoryUpdates: [
+          { action: "proposed", itemId: p?.id, text: "weekly-report", proposalId: p?.id, proposalIds: [p?.id] },
+        ],
+      },
+    });
+    const approver = await addMember(f.db, f.org.id, "admin");
+    await decideProposal(f.db, approver.id, f.org.id, p?.id ?? "", "accept", {});
     const [row] = await f.db.select().from(schema.skills).where(eq(schema.skills.slug, "weekly-report"));
     expect(row).toMatchObject({
       origin: "agent",
@@ -170,6 +183,20 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     });
     expect(row?.body).toContain("2. Post them in #reports.");
     expect((await enabledSkills(f.db, f.org.id, f.agent.id)).map((s) => s.name)).toEqual(["weekly-report"]);
+
+    // The receipt sits under the card and names who asked (the owner), not who approved.
+    const [receipt] = (await actionsFor(f.db, f.org.id, [card.id])).get(card.id) ?? [];
+    expect(receipt).toMatchObject({ kind: "skill.created", params: { name: "weekly-report", asked: true } });
+    const [stored] = await f.db
+      .select()
+      .from(schema.agentActions)
+      .where(eq(schema.agentActions.id, receipt?.id ?? ""));
+    expect(stored).toMatchObject({ runId: read.id, messageId: card.id, requestedByUserId: f.owner.id });
+
+    await undoAgentAction({ db: f.db, pubsub: f.pubsub }, f.owner.id, f.org.id, receipt?.id ?? "");
+    const [gone] = await f.db.select().from(schema.skills).where(eq(schema.skills.slug, "weekly-report"));
+    expect(gone?.deletedAt).not.toBeNull();
+    expect(await enabledSkills(f.db, f.org.id, f.agent.id)).toEqual([]);
   });
 
   test("a name taken before the accept makes the card stale and creates nothing", async () => {
@@ -235,6 +262,43 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     const out = await invoke(await personRun(f), "create_skill", skill("weekly-report"));
     expect(out.isError).toBeFalsy();
     expect(out.content).toContain("Created the skill weekly-report");
+  });
+
+  test("another run's waiting proposals do not count against this run, even one that started earlier", async () => {
+    f = await setup({ skillTools: true });
+    const a = await personRun(f);
+    const b = await outsideRun(f);
+    for (let i = 0; i < SKILL_CREATE_LIMITS.perRun; i++)
+      expect((await invoke(b, "create_skill", skill(`from-b-${i}`))).isError).toBeFalsy();
+    expect(await waiting()).toHaveLength(SKILL_CREATE_LIMITS.perRun);
+
+    const out = await invoke(a, "create_skill", skill("from-a"));
+    expect(out.isError).toBeFalsy();
+    expect(out.content).toContain("Created the skill from-a");
+  });
+
+  test("waiting proposals count toward the day only inside the last 24 hours", async () => {
+    f = await setup({ skillTools: true });
+    // perDay proposals, spread over runs that each stay under the run's limit.
+    for (let i = 0; i < SKILL_CREATE_LIMITS.perDay; i += SKILL_CREATE_LIMITS.perRun) {
+      const read = await outsideRun(f);
+      for (let j = 0; j < SKILL_CREATE_LIMITS.perRun; j++) await invoke(read, "create_skill", skill(`day-${i + j}`));
+    }
+    expect(await waiting()).toHaveLength(SKILL_CREATE_LIMITS.perDay);
+
+    const inside = await invoke(await personRun(f), "create_skill", skill("inside"));
+    expect(inside.isError).toBe(true);
+    expect(inside.content).toContain("today");
+
+    // One of them is older than a day now: there is room for a skill again.
+    const [oldest] = await waiting();
+    await f.db
+      .update(schema.contextProposals)
+      .set({ createdAt: new Date(Date.now() - 25 * 3600_000) })
+      .where(eq(schema.contextProposals.id, oldest?.id ?? ""));
+    const outside = await invoke(await personRun(f), "create_skill", skill("outside"));
+    expect(outside.isError).toBeFalsy();
+    expect(outside.content).toContain("Created the skill outside");
   });
 
   test("where skills are personal, outside content still refuses", async () => {

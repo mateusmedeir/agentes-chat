@@ -818,6 +818,8 @@ export async function proposeNewSkill(
     body: string;
     /** The person behind the run: the card is in front of them, so their inbox row isn't needed. */
     requesterId?: string | null;
+    /** The run proposing it: `checkedNewSkill` counts a run's own waiting skills by it. */
+    runId?: string | null;
   },
 ): Promise<Proposal | null> {
   const text = `---\nname: ${input.name}\ndescription: ${JSON.stringify(input.description)}\n---\n${input.body}\n`;
@@ -829,7 +831,7 @@ export async function proposeNewSkill(
     baseHash: sha256(""),
     proposedText: text,
     diff: lineDiff("", text),
-    access: [{ id: "", label: input.name, on: true }],
+    access: [{ id: "", label: input.name, on: true, ...(input.runId ? { runId: input.runId } : {}) }],
     skillPath: null,
   };
   const waiting = await sameChange(deps.db, row, ["pending"]);
