@@ -159,6 +159,13 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     await invoke(read, "create_skill", skill("weekly-report"));
     expect(await waiting()).toHaveLength(1);
 
+    // Another run of the same agent, after outside content, asking for the same skill gets the card that exists.
+    const other = await invoke(await outsideRun(f), "create_skill", skill("weekly-report"));
+    expect(other.isError).toBeFalsy();
+    const rows = await waiting();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.id).toBe(p?.id);
+
     // The reply that shows the card, as the run posts it at its end; someone else than the requester decides.
     const card = await insertMessage(f.db, {
       orgId: f.org.id,
@@ -282,7 +289,9 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     // perDay proposals, spread over runs that each stay under the run's limit.
     for (let i = 0; i < SKILL_CREATE_LIMITS.perDay; i += SKILL_CREATE_LIMITS.perRun) {
       const read = await outsideRun(f);
-      for (let j = 0; j < SKILL_CREATE_LIMITS.perRun; j++) await invoke(read, "create_skill", skill(`day-${i + j}`));
+      const left = Math.min(SKILL_CREATE_LIMITS.perRun, SKILL_CREATE_LIMITS.perDay - i);
+      for (let j = 0; j < left; j++)
+        expect((await invoke(read, "create_skill", skill(`day-${i + j}`))).isError).toBeFalsy();
     }
     expect(await waiting()).toHaveLength(SKILL_CREATE_LIMITS.perDay);
 
