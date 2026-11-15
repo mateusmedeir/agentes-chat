@@ -6717,6 +6717,7 @@ export const ptBR = {
     titleSettings: "Mudar as configurações do {{name}}",
     titleSettings_female: "Mudar as configurações da {{name}}",
     titleSkill: "Corrigir a skill {{skill}}",
+    titleNewSkill: "Criar a skill {{skill}}",
     titleContext: "Atualizar o contexto da {{org}}",
     titleContextPersonal: "Atualizar o que os seus agentes sabem sobre você",
     evidence: {

@@ -284,7 +284,9 @@ export function proposalTitle(
     const { key, org } = contextWords(orgName, "proposals.titleContext");
     return tt(key, { org, defaultValue: p.title });
   }
-  return tt(TITLE_KEY[p.target.type], {
+  // A skill with no id yet is one to create (`proposeNewSkill`): the person reads "Create", not "Fix".
+  const key = p.target.type === "skill" && !p.target.skillId ? "proposals.titleNewSkill" : TITLE_KEY[p.target.type];
+  return tt(key, {
     ...agentGrammar(agentName(p.target.agentId)),
     skill: p.target.type === "skill" ? p.target.name : "",
     defaultValue: p.title,

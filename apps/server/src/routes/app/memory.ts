@@ -456,7 +456,10 @@ async function proposalViews(db: Database, rows: (ProposalRow & { canDecide: boo
         : null,
       askedAt: r.askedAt ? r.askedAt.toISOString() : null,
       undoActionId: receiptOf.get(r.id) ?? null,
-      title: TITLE[r.target](r.target === "skill" ? (r.access?.[0]?.label ?? "") : name),
+      title:
+        r.target === "skill" && r.access?.[0]?.id === ""
+          ? `Create the skill ${r.access[0].label}`
+          : TITLE[r.target](r.target === "skill" ? (r.access?.[0]?.label ?? "") : name),
       ...proposalWhy(r, sourceItems),
       evidence: sourceItems.flatMap((i) =>
         i.evidence.map((e) => ({

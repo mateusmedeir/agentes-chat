@@ -444,6 +444,34 @@ export async function loadSkill(db: Database, orgId: string, id: string) {
   return s;
 }
 
+/**
+ * Inserts a skill an agent made (ADR 0120): its own (`origin agent`, `owner_agent_id`) and on for that agent only.
+ * `owner` is the person it is personal to, or null for the team's. The caller checked the text and the name, and
+ * records the receipt.
+ */
+export async function insertAgentSkill(
+  db: Database,
+  input: { orgId: string; agentId: string; name: string; description: string; body: string; owner: string | null },
+): Promise<SkillRow> {
+  const [skill] = await db
+    .insert(skills)
+    .values({
+      orgId: input.orgId,
+      slug: input.name,
+      name: input.name,
+      description: input.description,
+      body: input.body,
+      source: "manual",
+      origin: "agent",
+      ownerAgentId: input.agentId,
+      ownerUserId: input.owner,
+    })
+    .returning();
+  if (!skill) throw new Error("skill insert returned nothing");
+  await db.insert(agentSkills).values({ orgId: input.orgId, agentId: input.agentId, skillId: skill.id, enabled: true });
+  return skill;
+}
+
 /** The skills of one owner: the team's (`null`), or one person's. Names are unique within each. */
 export const skillsOf = (owner: string | null): SQL =>
   owner ? eq(skills.ownerUserId, owner) : isNull(skills.ownerUserId);

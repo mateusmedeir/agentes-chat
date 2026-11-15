@@ -5,7 +5,7 @@ import { sniffModelImage } from "./avatars";
 import { readsOrMayJoin } from "./channels";
 import { cardPlace } from "./consultations";
 import { learnTrust, ownWords } from "./context/learn";
-import { changeSkillAsAgent, createSkillAsAgent } from "./context/learned-skills";
+import { changeSkillAsAgent, createSkillAsAgent, proposeSkillAsAgent } from "./context/learned-skills";
 import { memoryResult } from "./context/tools";
 import { publishMessageCreated } from "./events";
 import { copyToComputer, type StoredFile } from "./file-pulls";
@@ -365,11 +365,35 @@ export function createSkillToolSource(
             };
           }
           if (trust === "low") {
-            return {
-              content:
-                "This turn read outside content (the web, mail or a connected app), so it can't make a skill: a skill loads as trusted instructions. Show the person the skill's text so they add it in Settings › Skills, or ask them to ask again in a new message.",
-              isError: true,
+            // Nothing is made on outside content's word: the skill waits as a card for someone who manages agents.
+            const wanted = {
+              name: str(input.name),
+              description: str(input.description),
+              body: str(input.body),
+              person,
             };
+            const reads = (await readsOrMayJoin(ctx.db, ctx.orgId, person, [ctx.channelId])).has(ctx.channelId);
+            const proposal = await proposeSkillAsAgent(
+              { db: ctx.db, pubsub: deps.pubsub, judge: deps.judge },
+              ctx,
+              wanted,
+              reads ? person : null,
+            );
+            if (!proposal) return { content: "Nothing changed: the same skill already waits for a person." };
+            const membership = await getMembership(ctx.db, person, ctx.orgId);
+            return memoryResult(
+              ctx,
+              `This turn read outside content (the web, mail or a connected app), so the skill ${wanted.name.trim().toLowerCase()} is a proposal (${proposal.id}): someone who manages agents accepts it on the card under your reply, and it is made then. Don't use it in this turn.`,
+              {
+                action: "proposed",
+                itemId: proposal.id,
+                text: wanted.name,
+                requestedByUserId: person,
+                proposalId: proposal.id,
+                proposalIds: [proposal.id],
+                canDecide: can(membership, "manage_agents"),
+              },
+            );
           }
           const skill = await createSkillAsAgent({ db: ctx.db, judge: deps.judge }, ctx, {
             name: str(input.name),

@@ -3,6 +3,7 @@ import { eq, schema } from "@agenteschat/db";
 import {
   actionsFor,
   addRunStep,
+  decideProposal,
   enabledSkills,
   insertMessage,
   linkRunActions,
@@ -11,7 +12,7 @@ import {
   type ToolContext,
   undoAgentAction,
 } from "../src";
-import { type Fixture, setup } from "./fixtures";
+import { addMember, type Fixture, setup } from "./fixtures";
 
 let f: Fixture;
 afterEach(async () => {
@@ -94,7 +95,7 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     expect(await enabledSkills(f.db, f.org.id, f.agent.id)).toEqual([]);
   });
 
-  test("refused after outside content, for a name already here, with a credential, and past the run's limit", async () => {
+  test("refused for a name already here, with a credential, and past the run's limit", async () => {
     f = await setup({ skillTools: true });
     await saveSkill({ db: f.db, blobs: f.artifactDeps.blobs }, f.owner.id, f.org.id, {
       name: "deploy",
@@ -103,14 +104,6 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
       metadata: {},
       source: "manual",
     });
-
-    const read = await personRun(f);
-    const toolUseId = `tu_${crypto.randomUUID()}`;
-    await addRunStep(f.db, read, "tool_call", { toolUseId, name: "web_fetch", input: { url: "https://example.com" } });
-    await addRunStep(f.db, read, "tool_result", { toolUseId, name: "web_fetch", content: "page", isError: false });
-    const outside = await invoke(read, "create_skill", skill("weekly-report"));
-    expect(outside.isError).toBe(true);
-    expect(outside.content).toContain("read outside content");
 
     const run = await personRun(f);
     const taken = await invoke(run, "create_skill", skill("deploy"));
@@ -130,5 +123,111 @@ describe("an agent makes a skill when a person asks (ADR 0120, addendum of 2026-
     expect(past.isError).toBe(true);
     const made = await f.db.select().from(schema.skills).where(eq(schema.skills.origin, "agent"));
     expect(made.map((s) => s.name).sort()).toEqual(["report-0", "report-1"]);
+  });
+
+  /** A person's run that read a page first: its trust is low, so what it makes waits for a card. */
+  async function outsideRun(fx: Fixture) {
+    const read = await personRun(fx);
+    const toolUseId = `tu_${crypto.randomUUID()}`;
+    await addRunStep(fx.db, read, "tool_call", { toolUseId, name: "web_fetch", input: { url: "https://example.com" } });
+    await addRunStep(fx.db, read, "tool_result", { toolUseId, name: "web_fetch", content: "page", isError: false });
+    return read;
+  }
+
+  const waiting = () => f.db.select().from(schema.contextProposals).where(eq(schema.contextProposals.target, "skill"));
+
+  test("after outside content it is a proposal: nothing is made until a person accepts, and then it is the agent's", async () => {
+    f = await setup({ skillTools: true });
+    const read = await outsideRun(f);
+    const out = await invoke(read, "create_skill", skill("weekly-report"));
+    expect(out.isError).toBeFalsy();
+    expect(out.content).toContain("proposal");
+    expect(await f.db.select().from(schema.skills)).toEqual([]);
+
+    const [p] = await waiting();
+    expect(p).toMatchObject({
+      status: "pending",
+      agentId: f.agent.id,
+      proposedByAgentId: f.agent.id,
+      skillPath: null,
+      access: [{ id: "", label: "weekly-report", on: true }],
+    });
+    expect(p?.proposedText).toContain("name: weekly-report");
+    expect(p?.proposedText).toContain("# Weekly report");
+
+    // The same request again is the same card, not a second one.
+    await invoke(read, "create_skill", skill("weekly-report"));
+    expect(await waiting()).toHaveLength(1);
+
+    await decideProposal(f.db, f.owner.id, f.org.id, p?.id ?? "", "accept", {});
+    const [row] = await f.db.select().from(schema.skills).where(eq(schema.skills.slug, "weekly-report"));
+    expect(row).toMatchObject({
+      origin: "agent",
+      ownerAgentId: f.agent.id,
+      ownerUserId: null,
+      source: "manual",
+      description: "When publishing the weekly report.",
+    });
+    expect(row?.body).toContain("2. Post them in #reports.");
+    expect((await enabledSkills(f.db, f.org.id, f.agent.id)).map((s) => s.name)).toEqual(["weekly-report"]);
+  });
+
+  test("a name taken before the accept makes the card stale and creates nothing", async () => {
+    f = await setup({ skillTools: true });
+    const out = await invoke(await outsideRun(f), "create_skill", skill("weekly-report"));
+    expect(out.isError).toBeFalsy();
+    await saveSkill({ db: f.db, blobs: f.artifactDeps.blobs }, f.owner.id, f.org.id, {
+      name: "weekly-report",
+      description: "Someone made it first.",
+      body: "# mine",
+      metadata: {},
+      source: "manual",
+    });
+    const [p] = await waiting();
+    await expect(decideProposal(f.db, f.owner.id, f.org.id, p?.id ?? "", "accept", {})).rejects.toThrow();
+    const [after] = await waiting();
+    expect(after?.status).toBe("stale");
+    expect((await f.db.select().from(schema.skills)).map((s) => s.description)).toEqual(["Someone made it first."]);
+  });
+
+  test("outside content still refuses a credential and a name already here", async () => {
+    f = await setup({ skillTools: true });
+    await saveSkill({ db: f.db, blobs: f.artifactDeps.blobs }, f.owner.id, f.org.id, {
+      name: "deploy",
+      description: "Before any deploy.",
+      body: "# deploy",
+      metadata: {},
+      source: "manual",
+    });
+    const read = await outsideRun(f);
+    const taken = await invoke(read, "create_skill", skill("deploy"));
+    expect(taken.isError).toBe(true);
+    expect(taken.content).toContain("already exists");
+    const secret = await invoke(read, "create_skill", {
+      ...skill("with-key"),
+      body: "Use the key sk-test-00000000000000000000",
+    });
+    expect(secret.isError).toBe(true);
+    expect(secret.content).toContain("credential");
+    expect(await waiting()).toEqual([]);
+  });
+
+  test("waiting proposals count toward the run's limit", async () => {
+    f = await setup({ skillTools: true });
+    const read = await outsideRun(f);
+    for (let i = 0; i < SKILL_CREATE_LIMITS.perRun; i++)
+      expect((await invoke(read, "create_skill", skill(`report-${i}`))).isError).toBeFalsy();
+    const past = await invoke(read, "create_skill", skill("one-more"));
+    expect(past.isError).toBe(true);
+    expect(await waiting()).toHaveLength(SKILL_CREATE_LIMITS.perRun);
+  });
+
+  test("where skills are personal, outside content still refuses", async () => {
+    f = await setup({ skillTools: true });
+    await addMember(f.db, f.org.id, "member");
+    const out = await invoke(await outsideRun(f), "create_skill", skill("weekly-report"));
+    expect(out.isError).toBe(true);
+    expect(await waiting()).toEqual([]);
+    expect(await f.db.select().from(schema.skills)).toEqual([]);
   });
 });

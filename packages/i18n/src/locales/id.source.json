@@ -15652,6 +15652,9 @@
   "proposals.titleSkill": {
     "value": "Fix the skill {{skill}}"
   },
+  "proposals.titleNewSkill": {
+    "value": "Create the skill {{skill}}"
+  },
   "proposals.titleContext": {
     "value": "Update the {{org}} context"
   },

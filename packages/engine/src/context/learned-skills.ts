@@ -15,6 +15,7 @@ import {
   classifyFile,
   cleanSkillPath,
   editedByAgents,
+  insertAgentSkill,
   personalSkillsOn,
   pinBlobs,
   requireAgentSkillChange,
@@ -38,7 +39,7 @@ import {
   mergeEvidence,
 } from "./items";
 import { overlap } from "./judgments";
-import { proposeSkillChange } from "./proposals";
+import { proposeNewSkill, proposeSkillChange } from "./proposals";
 import { type ContextDeps, judgeOf, resolveSummaryModel } from "./summaries";
 
 const { skills, agentSkills, contextItems, contextUsage, outcomes, agentRuns, agentActions, routines, channels } =
@@ -296,18 +297,16 @@ export async function changeSkillAsAgent(
 export const SKILL_CREATE_LIMITS = { perRun: 2, perDay: 6 };
 
 /**
- * A person asks an agent to turn what it did into a skill (ADR 0120, addendum of 2026-11-14): the skill is the
- * agent's own, as one promoted from its how-tos (`origin agent`, `owner_agent_id`, on for that agent only, archived when
- * unused), at once, with a `skill.created` receipt (Desfazer) that says a person asked. People give it to other agents
- * in Skills. Only a person's run that read nothing from outside (`learnTrust` high): a skill loads as trusted
- * instructions. The body alone, its text files later through `update_skill`; never credentials or permission rules.
- * Where skills are the team's and each person's (`personalSkillsOn`), it is the personal skill of `person`, who asked.
+ * What a new skill must pass before it is made or proposed: a valid text with no credential or permission rule, a free
+ * name, and room under `SKILL_CREATE_LIMITS`, where the new skills still waiting as proposals count too. As a card
+ * (`how` "card"), where skills are personal the skill can't be proposed: a proposal shows its text to whoever reviews it.
  */
-export async function createSkillAsAgent(
+async function checkedNewSkill(
   deps: { db: Database; judge?: Judge },
   ctx: RunCtx & { db: Database },
   input: { name: string; description: string; body: string; person?: string | null },
-): Promise<SkillRow> {
+  how: "now" | "card",
+) {
   const name = input.name.trim().toLowerCase();
   const description = input.description.trim();
   const body = input.body.trim();
@@ -315,7 +314,12 @@ export async function createSkillAsAgent(
   validateSkill({ name, description, body });
   if (looksLikeSecret(`${description}\n${body}`))
     throw new ValidationError("This looks like a credential, so it can't go in a skill.");
-  const owner = input.person && (await personalSkillsOn(ctx.db, ctx.orgId)) ? input.person : null;
+  const personal = !!input.person && (await personalSkillsOn(ctx.db, ctx.orgId));
+  if (personal && how === "card")
+    throw new ValidationError(
+      "Skills here are personal, and a proposal would show this one's text to someone else. Show the person the skill's text so they add it in Settings › Skills.",
+    );
+  const owner = personal ? (input.person ?? null) : null;
   const [taken] = await ctx.db
     .select({ id: skills.id, deletedAt: skills.deletedAt })
     .from(skills)
@@ -342,28 +346,65 @@ export async function createSkillAsAgent(
         gt(agentActions.createdAt, new Date(Date.now() - 24 * 3600_000)),
       ),
     );
-  if ((made?.run ?? 0) >= SKILL_CREATE_LIMITS.perRun)
+  const [asked] = await ctx.db
+    .select({ n: sql<number>`count(*)::int` })
+    .from(schema.contextProposals)
+    .where(
+      and(
+        eq(schema.contextProposals.orgId, ctx.orgId),
+        eq(schema.contextProposals.target, "skill"),
+        eq(schema.contextProposals.status, "pending"),
+        eq(schema.contextProposals.proposedByAgentId, ctx.agentId),
+        sql`${schema.contextProposals.access}->0->>'id' = ''`,
+      ),
+    );
+  const waiting = asked?.n ?? 0;
+  if ((made?.run ?? 0) + waiting >= SKILL_CREATE_LIMITS.perRun)
     throw new ValidationError("You already made skills in this turn: put the rest in one of them with update_skill.");
-  if ((made?.day ?? 0) >= SKILL_CREATE_LIMITS.perDay)
+  if ((made?.day ?? 0) + waiting >= SKILL_CREATE_LIMITS.perDay)
     throw new ValidationError("You made enough skills today: save this one with save_how_to and make it tomorrow.");
+  return { name, description, body, owner };
+}
+
+/**
+ * A new skill from a run that read outside content (ADR 0120, addendum of 2026-11-15): where `createSkillAsAgent`
+ * would refuse, it waits as a proposal that a person who manages agents accepts on a card, and is made only then.
+ * Null when the same one already waits.
+ */
+export async function proposeSkillAsAgent(
+  deps: { db: Database; pubsub?: PubSub; judge?: Judge },
+  ctx: RunCtx & { db: Database },
+  input: { name: string; description: string; body: string; person?: string | null },
+  requesterId?: string | null,
+) {
+  const { name, description, body } = await checkedNewSkill(deps, ctx, input, "card");
+  return proposeNewSkill(deps, { orgId: ctx.orgId, agentId: ctx.agentId, name, description, body, requesterId });
+}
+
+/**
+ * A person asks an agent to turn what it did into a skill (ADR 0120, addendum of 2026-11-14): the skill is the
+ * agent's own, as one promoted from its how-tos (`origin agent`, `owner_agent_id`, on for that agent only, archived when
+ * unused), at once, with a `skill.created` receipt (Desfazer) that says a person asked. People give it to other agents
+ * in Skills. At once only in a person's run that read nothing from outside (`learnTrust` high), since a skill loads as
+ * trusted instructions; after outside content it is a card instead (`proposeSkillAsAgent`). The body alone, its text files later through `update_skill`; never credentials or permission rules.
+ * Where skills are the team's and each person's (`personalSkillsOn`), it is the personal skill of `person`, who asked.
+ */
+export async function createSkillAsAgent(
+  deps: { db: Database; judge?: Judge },
+  ctx: RunCtx & { db: Database },
+  input: { name: string; description: string; body: string; person?: string | null },
+): Promise<SkillRow> {
+  const { name, description, body, owner } = await checkedNewSkill(deps, ctx, input, "now");
   return ctx.db.transaction(async (tx) => {
     const db = tx as unknown as Database;
-    const [skill] = await db
-      .insert(skills)
-      .values({
-        orgId: ctx.orgId,
-        slug: name,
-        name,
-        description,
-        body,
-        source: "manual",
-        origin: "agent",
-        ownerAgentId: ctx.agentId,
-        ownerUserId: owner,
-      })
-      .returning();
-    if (!skill) throw new Error("skill insert returned nothing");
-    await db.insert(agentSkills).values({ orgId: ctx.orgId, agentId: ctx.agentId, skillId: skill.id, enabled: true });
+    const skill = await insertAgentSkill(db, {
+      orgId: ctx.orgId,
+      agentId: ctx.agentId,
+      name,
+      description,
+      body,
+      owner,
+    });
     await recordAgentActions(db, ctx, [
       {
         kind: "skill.created",

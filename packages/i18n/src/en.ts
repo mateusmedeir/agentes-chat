@@ -6772,6 +6772,7 @@ export const en = {
     titleAccess: "Change {{name}}'s access",
     titleSettings: "Change {{name}}'s settings",
     titleSkill: "Fix the skill {{skill}}",
+    titleNewSkill: "Create the skill {{skill}}",
     titleContext: "Update the {{org}} context",
     titleContextPersonal: "Update what your agents know about you",
     evidence: {

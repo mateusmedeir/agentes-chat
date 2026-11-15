@@ -57,7 +57,17 @@ import {
   settingsRows,
   type WantedLine,
 } from "../settings-proposals";
-import { editedByAgents, pinBlobs, runsCode, skillFolderFiles, writeSkillBody, writeSkillChange } from "../skills";
+import {
+  editedByAgents,
+  insertAgentSkill,
+  parseSkillMarkdown,
+  pinBlobs,
+  runsCode,
+  skillFolderFiles,
+  skillsOf,
+  writeSkillBody,
+  writeSkillChange,
+} from "../skills";
 import { ALL_TOOLS } from "../tools/scopes";
 import type { ToolContext } from "../tools/types";
 import {
@@ -505,7 +515,7 @@ export async function decideProposal(
     const as = tx as unknown as Database;
     let status: Proposal["status"] = decision === "accept" ? "accepted" : "rejected";
     if (decision === "accept" && p.target === "skill") {
-      if (!(await appliedToSkill({ db: as, blobs }, p))) status = "stale";
+      if (!(await appliedToSkill({ db: as, blobs }, actorId, p))) status = "stale";
     } else if (decision === "accept" && p.target === "org_context") {
       const [org] = await tx.select().from(organizations).where(eq(organizations.id, orgId)).for("update");
       if (!org || sha256(org.context) !== p.baseHash) status = "stale";
@@ -792,9 +802,100 @@ export async function proposeSkillChange(
   return proposal;
 }
 
-async function appliedToSkill(deps: { db: Database; blobs?: BlobStoreResolver }, p: Proposal) {
+/**
+ * A new skill an agent made after reading outside content (ADR 0120, addendum of 2026-11-15): the whole `SKILL.md`
+ * as the proposed text, against an empty base like a new file of a skill, and no skill id yet (the access line's id
+ * is empty). The checks of `createSkillAsAgent` ran before; nothing is made until a person who manages agents
+ * accepts. Returns the one already waiting when it is the same.
+ */
+export async function proposeNewSkill(
+  deps: { db: Database; pubsub?: PubSub },
+  input: {
+    orgId: string;
+    agentId: string;
+    name: string;
+    description: string;
+    body: string;
+    /** The person behind the run: the card is in front of them, so their inbox row isn't needed. */
+    requesterId?: string | null;
+  },
+): Promise<Proposal | null> {
+  const text = `---\nname: ${input.name}\ndescription: ${JSON.stringify(input.description)}\n---\n${input.body}\n`;
+  checkContent(text);
+  const row = {
+    orgId: input.orgId,
+    target: "skill" as const,
+    agentId: input.agentId,
+    baseHash: sha256(""),
+    proposedText: text,
+    diff: lineDiff("", text),
+    access: [{ id: "", label: input.name, on: true }],
+    skillPath: null,
+  };
+  const waiting = await sameChange(deps.db, row, ["pending"]);
+  if (waiting) return waiting;
+  const [proposal] = await deps.db
+    .insert(contextProposals)
+    .values({
+      ...row,
+      proposedByAgentId: input.agentId,
+      requestedByUserId: input.requesterId ?? null,
+      rationale: `A new skill, ${input.name}, from a person's request.`,
+    })
+    .returning();
+  if (!proposal) return null;
+  await announce(deps, [proposal]);
+  return proposal;
+}
+
+/**
+ * Makes the skill a `proposeNewSkill` row asks for, as `createSkillAsAgent` does (its agent's own, on for it, with a
+ * `skill.created` receipt when a card shows the row); false when the name was taken since.
+ */
+async function createdFromProposal(db: Database, actorId: string, p: Proposal) {
+  if (!p.agentId) return false;
+  const parsed = parseSkillMarkdown(p.proposedText);
+  const [taken] = await db
+    .select({ id: schema.skills.id })
+    .from(schema.skills)
+    .where(and(eq(schema.skills.orgId, p.orgId), eq(schema.skills.slug, parsed.name), skillsOf(null)));
+  if (taken) return false;
+  const skill = await insertAgentSkill(db, {
+    orgId: p.orgId,
+    agentId: p.agentId,
+    name: parsed.name,
+    description: parsed.description,
+    body: parsed.body,
+    owner: null,
+  });
+  const card = await cardOf(db, p);
+  if (card?.runId) {
+    const now = new Date();
+    await db.insert(schema.agentActions).values({
+      orgId: p.orgId,
+      runId: card.runId,
+      agentId: p.agentId,
+      channelId: card.channelId,
+      messageId: card.messageId,
+      requestedByUserId: actorId,
+      kind: "skill.created",
+      targetType: "skill",
+      targetId: skill.id,
+      target: { title: skill.name },
+      params: { name: skill.name, asked: true },
+      before: null,
+      after: { skillId: skill.id, noteIds: [] },
+      createdAt: now,
+      undoableUntil: new Date(now.getTime() + UNDO_WINDOW_MS),
+    });
+  }
+  return true;
+}
+
+async function appliedToSkill(deps: { db: Database; blobs?: BlobStoreResolver }, actorId: string, p: Proposal) {
   const { db } = deps;
   const id = proposalSkillId(p);
+  if (id === "") return createdFromProposal(db, actorId, p);
   if (!id) return false;
   const edited = (was: typeof schema.skills.$inferSelect) =>
     db.update(schema.skills).set(editedByAgents(was)).where(eq(schema.skills.id, id));
