@@ -44584,6 +44584,15 @@
   "chat.work.step.pcFiles": {
     "value": "Worked on the PC files"
   },
+  "chat.work.step.readingPcFile": {
+    "value": "Read {{app}}"
+  },
+  "chat.work.step.editingPcFile": {
+    "value": "Edited {{app}}"
+  },
+  "chat.work.step.searchingPc": {
+    "value": "Searched for {{app}}"
+  },
   "chat.work.step.creatingImage": {
     "value": "Made an image"
   },
@@ -44934,6 +44943,15 @@
   },
   "chat.activity.pcFiles": {
     "value": "working with the PC's files"
+  },
+  "chat.activity.readingPcFile": {
+    "value": "reading {{app}}"
+  },
+  "chat.activity.editingPcFile": {
+    "value": "editing {{app}}"
+  },
+  "chat.activity.searchingPc": {
+    "value": "searching for {{app}}"
   },
   "chat.activity.creatingImage": {
     "value": "making an image"
