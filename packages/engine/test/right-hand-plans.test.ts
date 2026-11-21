@@ -276,6 +276,31 @@ test("its plan's CLI failing and nothing to stand in: its line says what the CLI
   );
 });
 
+test("its step line never carries a sign-in in what its own call works on", async () => {
+  const { fx, deps, lodi } = await world();
+  await setAgentBrain(deps, fx.owner.id, fx.org.id, (await lodi()).id, { brain: "claude_code", account: ANAS });
+  const agent = await lodi();
+  const brain: Brain = {
+    kind: "claude_code",
+    async *run() {
+      yield { type: "tool_started", id: "b1", name: "Bash", detail: "sync with ya29.aaaaaaaaaaaaaaaaaaaaaaaaaaaa now" };
+      yield { type: "tool_call", id: "b1", name: "Bash", input: { command: "sync" }, executed: { content: "ok" } };
+      yield { type: "done", text: "Pronto." };
+    },
+  };
+  const handlers = createJobHandlers({
+    ...fx.jobDeps,
+    brains: { claude_code: () => brain },
+    machines: { status: async (id) => statusOf(id) },
+  });
+  const dm = await openPersonAgentDm(fx.db, fx.org.id, fx.owner.id, agent.id);
+  const events = fx.listen(dm.id);
+  await postPersonMessage({ db: fx.db, pubsub: fx.pubsub }, fx.owner.id, fx.org.id, dm.id, { body: "oi" });
+  await drainOutbox(fx.db, handlers);
+  const steps = events.filter((e) => e.type === "agent.step") as { detail?: string }[];
+  expect(steps.map((s) => s.detail)).toEqual(["sync with •••• now"]);
+});
+
 test("a request no person made, on a plan that answers only its owner: its line never says to connect a plan", async () => {
   const { fx, deps, lodi: helper, noStandIn } = await world();
   await noStandIn();

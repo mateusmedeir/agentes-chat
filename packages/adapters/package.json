@@ -12,6 +12,7 @@
     "./command-policy": "./src/command-policy.ts",
     "./secret-box": "./src/secret-box.ts",
     "./redact": "./src/redact.ts",
+    "./step-detail": "./src/step-detail.ts",
     "./error-scrub": "./src/error-scrub.ts",
     "./error-reports": "./src/error-reports.ts",
     "./problem-report": "./src/problem-report.ts",
