@@ -37,6 +37,9 @@ export type ActivityKind =
   | "runningCode"
   | "browsing"
   | "pcFiles"
+  | "readingPcFile"
+  | "editingPcFile"
+  | "searchingPc"
   | "creatingImage"
   | "exportingFile"
   | "importingFile"
@@ -334,6 +337,25 @@ const OWN_TOOLS: Record<string, ActivityKind> = {
   bash: "runningCommandAny",
   shell: "runningCommandAny",
   toolsearch: "findingTools",
+  webfetch: "readingWeb",
+  websearch: "searchingWeb",
+};
+
+/**
+ * What those tools say when the runner tells what they work on (`agent.step`'s `detail`): reading, editing or
+ * searching for it, or the command ("rodando: instala dependências"), with the thing itself in the phrase.
+ */
+const OWN_TOOLS_WITH_DETAIL: Record<string, ActivityKind> = {
+  read: "readingPcFile",
+  edit: "editingPcFile",
+  multiedit: "editingPcFile",
+  write: "editingPcFile",
+  notebookedit: "editingPcFile",
+  file_change: "editingPcFile",
+  glob: "searchingPc",
+  grep: "searchingPc",
+  bash: "runningCommand",
+  shell: "runningCommand",
 };
 
 /** Catalog connectors (packages/engine/src/connectors/catalog.ts): tools are exposed as `<id>_<tool>`. */
@@ -426,6 +448,8 @@ function activityOf(tool: string | null | undefined, connector?: string | null, 
   // "Rodou: Rerun the tests": the command it checked, by the engine's label (`toolDetail`).
   if (name === PERMISSION_TOOL)
     return detail?.trim() ? { kind: "runningCommand", app: detail.trim() } : { kind: "runningCommandAny" };
+  const detailed = detail?.trim() && !BUILTIN[name] ? OWN_TOOLS_WITH_DETAIL[name] : undefined;
+  if (detailed) return { kind: detailed, app: detail?.trim() ?? "" };
   const builtin = BUILTIN[name] ?? OWN_TOOLS[name];
   if (builtin) return { kind: builtin };
   // The tools on demand: looking one up (a big connector's own directory too) is ours, not an app.

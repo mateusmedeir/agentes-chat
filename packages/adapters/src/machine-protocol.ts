@@ -7,7 +7,7 @@ import type { MergeDone } from "./command-policy";
  */
 
 /** Bumped on breaking changes; the server refuses runners older than `MIN_RUNNER_PROTOCOL`. */
-export const MACHINE_PROTOCOL_VERSION = 76;
+export const MACHINE_PROTOCOL_VERSION = 77;
 export const MIN_RUNNER_PROTOCOL = 1;
 /** From this protocol on, requests carry `agent` and each agent works in its own folder. */
 export const AGENT_FOLDERS_PROTOCOL = 2;
@@ -2203,8 +2203,11 @@ export type WireBrainEvent =
   | { type: "answer"; text: string }
   /** Protocol 46: Fast failed (`message`: the provider's words) and this turn answered at standard speed. */
   | { type: "speed_fallback"; message: string }
-  /** A call the brain starts on its own (Claude Code's Read, Bash, Task): its `tool_call` follows once it ended. */
-  | { type: "tool_started"; id: string; name: string }
+  /**
+   * A call the brain starts on its own (Claude Code's Read, Bash, Task): its `tool_call` follows once it ended.
+   * `detail` (`STEP_DETAIL_PROTOCOL`, cut at `STEP_DETAIL_MAX`): what it works on, already short and masked (absent: an older runner, or nothing to say).
+   */
+  | { type: "tool_started"; id: string; name: string; detail?: string }
   /**
    * A file a tool of the brain's own made (Codex's image generation), kept in the agent's folder (`path`, relative
    * to it): the server sends it to the Drive and its card goes with the reply. An older server drops the event.
@@ -2385,6 +2388,15 @@ export const TASK_LIMIT_PROTOCOL = 75;
  * app's version. An older runner runs whatever `agy` the person installed.
  */
 export const AGY_COPY_PROTOCOL = 76;
+
+/**
+ * What a computer brain's own call works on (protocol 77): `tool_started.detail`, a short line the runner builds and
+ * masks itself (a file's path in the agent's folder, a search, a command's description, a site: `ownToolDetail`), so
+ * the input itself never crosses the wire. An older runner leaves it out: the step line names the tool only.
+ */
+export const STEP_DETAIL_PROTOCOL = 77;
+/** The longest `tool_started.detail` the server keeps. */
+export const STEP_DETAIL_MAX = 120;
 /** The tasks a computer may run at once (`maxConcurrentTasks` in the runner's config). */
 export const TASK_LIMIT_BOUNDS = [1, 20] as const;
 
@@ -3827,10 +3839,15 @@ export function parseBrainEvent(v: unknown): WireBrainEvent | null {
         : null;
     case "speed_fallback":
       return { type: "speed_fallback", message: (isString(v.message) ? v.message : "").slice(0, BRAIN_LIMITS.message) };
+    // `detail` is `STEP_DETAIL_PROTOCOL`'s: trimmed and cut at `STEP_DETAIL_MAX`; an older runner sends none.
     case "tool_started":
-      return isString(v.id) && isString(v.name)
-        ? { type: "tool_started", id: v.id.slice(0, 128), name: v.name.slice(0, BRAIN_LIMITS.toolName) }
-        : null;
+      if (!isString(v.id) || !isString(v.name)) return null;
+      return {
+        type: "tool_started",
+        id: v.id.slice(0, 128),
+        name: v.name.slice(0, BRAIN_LIMITS.toolName),
+        ...(isString(v.detail) && v.detail.trim() ? { detail: v.detail.trim().slice(0, STEP_DETAIL_MAX) } : {}),
+      };
     case "file":
       return isString(v.path) && v.path.length > 0 && v.path.length <= 1024 ? { type: "file", path: v.path } : null;
     case "stalled": {

@@ -215,7 +215,7 @@ test("parser: partial deltas, our tool calls with results, usage, and the final 
         },
       }),
     ).events,
-  ).toEqual([{ type: "tool_started", id: "t2", name: "Bash" }]);
+  ).toEqual([{ type: "tool_started", id: "t2", name: "Bash", detail: "ls" }]);
   const results = p.push(
     line({
       type: "user",
@@ -330,7 +330,7 @@ test("parser: a streamed message said again in a later assistant event (with its
       { type: "tool_use", id: "t1", name: "Bash", input: { command: "ls" } },
     ]),
     // Its own call is told as it starts (the step line), ours through the bridge never.
-  ).toEqual([{ type: "tool_started", id: "t1", name: "Bash" }]);
+  ).toEqual([{ type: "tool_started", id: "t1", name: "Bash", detail: "ls" }]);
   // The next API message, never streamed (no partials for it): its text comes whole.
   expect(
     p.push(
@@ -3291,3 +3291,37 @@ test.if(posix)(
     expect(spawns().at(-1)?.args.slice(-2)).toEqual(["--session-id", SESSION(3)]);
   },
 );
+
+test("parser: its own call is told as it starts with what it works on, masked, and a connector's call never shows its input", () => {
+  const p = new ClaudeStreamParser();
+  p.beginTurn();
+  p.folder = "/srv/agents/ana";
+  const started = (name: string, input: unknown) =>
+    p.push(
+      line({
+        type: "assistant",
+        parent_tool_use_id: null,
+        message: { id: `m-${name}`, content: [{ type: "tool_use", id: "t1", name, input }] },
+      }),
+    ).events;
+  expect(started("Read", { file_path: "/srv/agents/ana/src/x.ts" })).toEqual([
+    { type: "tool_started", id: "t1", name: "Read", detail: "src/x.ts" },
+  ]);
+  expect(started("Grep", { pattern: "takeStepWords" })).toEqual([
+    { type: "tool_started", id: "t1", name: "Grep", detail: "takeStepWords" },
+  ]);
+  expect(started("Bash", { command: "bun install", description: "Instala dependências" })).toEqual([
+    { type: "tool_started", id: "t1", name: "Bash", detail: "Instala dependências" },
+  ]);
+  expect(started("WebFetch", { url: "https://docs.example.com/a?token=abc" })).toEqual([
+    { type: "tool_started", id: "t1", name: "WebFetch", detail: "docs.example.com/a" },
+  ]);
+  expect(started("Bash", { command: "ls", description: "Uses sk-ant-abcdefghijklmnopqrstuvwxyz0123" })).toEqual([
+    { type: "tool_started", id: "t1", name: "Bash", detail: "Uses ••••" },
+  ]);
+  // A connector's call and one with no input to say: the name only, as an older runner sends it.
+  expect(started("mcp__github__create_issue", { title: "Bug", file_path: "a.ts" })).toEqual([
+    { type: "tool_started", id: "t1", name: "mcp__github__create_issue" },
+  ]);
+  expect(started("Read", "not an object")).toEqual([{ type: "tool_started", id: "t1", name: "Read" }]);
+});
