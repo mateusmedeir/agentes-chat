@@ -53,6 +53,28 @@ test("a computer brain's own call, which no agent.tool told, says what it did un
   expect(stepAfter([{ ...read, tool: "run_terminal_command" }], 9000)).toBe("rodando um comando…");
 });
 
+test("a computer brain's own call that says what it works on names it: reading, editing, searching, the command", () => {
+  const own = (tool: string, detail?: string) => ({ type: "agent.step", ...base, tool, ...(detail ? { detail } : {}) });
+  expect(stepAfter([own("Read", "src/x.ts")], 9000)).toBe("lendo src/x.ts…");
+  expect(stepAfter([own("Edit", "src/x.ts")], 9000)).toBe("editando src/x.ts…");
+  expect(stepAfter([own("MultiEdit", "src/x.ts")], 9000)).toBe("editando src/x.ts…");
+  expect(stepAfter([own("file_change", "src/x.ts")], 9000)).toBe("editando src/x.ts…");
+  expect(stepAfter([own("Grep", "takeStepWords")], 9000)).toBe("procurando takeStepWords…");
+  expect(stepAfter([own("Glob", "**/*.ts")], 9000)).toBe("procurando **/*.ts…");
+  expect(stepAfter([own("Bash", "instala dependências")], 9000)).toBe("rodando: instala dependências…");
+  expect(stepAfter([own("shell", "bun test")], 9000)).toBe("rodando: bun test…");
+  // A tool with no phrase of its own for it keeps its verb, and the thing follows.
+  expect(stepAfter([own("WebFetch", "docs.example.com/a")], 9000)).toBe("lendo uma página da web · docs.example.com…");
+  expect(stepAfter([own("WebSearch", "bun test coverage")], 9000)).toBe("pesquisando na web · bun test coverage…");
+  // No detail (an older runner): the tool's verb alone, as before.
+  expect(stepAfter([own("Read")], 9000)).toBe("mexendo nos arquivos do PC…");
+  expect(stepAfter([own("Bash")], 9000)).toBe("rodando um comando…");
+  // A long one is cut for the line.
+  expect(stepAfter([own("Grep", "a".repeat(120))], 9000).length).toBeLessThan(80);
+  // Its own words still come first.
+  expect(stepAfter([{ ...own("Read", "src/x.ts"), said: "Vou ler" }], 9000)).toBe("“Vou ler”");
+});
+
 test("a call waiting on a person says so before any words", () => {
   const held = { type: "agent.tool", ...base, tool: null, toolUseId: "q1", held: true };
   expect(stepAfter([call("q1", "ask_user", "Vou perguntar"), held], 9000)).toBe("esperando aprovação…");

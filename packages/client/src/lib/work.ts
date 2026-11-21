@@ -778,6 +778,9 @@ export function toolPhrase(t: TFunction, l: Pick<ToolLine, "kind" | "app" | "too
   return t(`chat.work.step.${l.kind}`, { app: appLabel(l), tool: toolWords(t, l.tool, locale) });
 }
 
+/** The longest thing a step line names in its own phrase ("lendo src/x.ts"), a path whole, cut with "…" past it. */
+const STEP_THING_MAX = 60;
+
 /** A turn quicker than this shows nothing new: its step line says the agent's own words only past it. */
 export const STEP_WORDS_AFTER_MS = 5000;
 
@@ -793,7 +796,14 @@ export function waitStep(t: TFunction, work: LiveWork[] | undefined, step?: Live
   if (step?.said) return t("chat.wait.said", { text: step.said });
   const now = toolNow(toolItemsLive(work ?? []));
   if (now?.state !== "run") {
-    return step?.tool ? `${capitalize(activityVerb(t, toolActivity(step.tool)))}…` : t("chat.wait.thinking");
+    if (!step?.tool) return t("chat.wait.thinking");
+    // Its own call and what it works on: the phrase says it ("Lendo src/x.ts…"), else the verb and the thing.
+    const raw = step.detail?.trim() ?? "";
+    const thing = raw.length > STEP_THING_MAX ? `${raw.slice(0, STEP_THING_MAX - 1)}…` : raw;
+    const own = toolActivity(step.tool, null, thing);
+    const verb = capitalize(activityVerb(t, own));
+    const target = raw && own.app !== thing ? shortTarget(raw) : "";
+    return target ? `${verb} · ${target}…` : `${verb}…`;
   }
   const verb = capitalize(activityVerb(t, now));
   // The folded line keeps its first call's hint; the step line names the call running now, one the block lists: a call

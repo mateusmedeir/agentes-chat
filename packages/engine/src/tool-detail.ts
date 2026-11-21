@@ -1,36 +1,21 @@
 import {
+  commandLabel,
   commandOf,
-  commandWords,
   errorLineOf,
-  KEY_SHAPES,
-  maskValuesAfter,
-  normalizedCommand,
+  maskCredentials,
+  maskSecrets,
   PERMISSION_TOOL,
   PRIVATE_KEY,
-  redactCommon,
-  SIGNED_SHAPES,
+  PRIVATE_KEY_BLOCK,
+  redactCredentials,
+  SECRET,
+  shortLine as short,
+  siteOf,
 } from "@agenteschat/adapters";
 import { and, type Database, eq, isNull, schema } from "@agenteschat/db";
 import { clipText } from "@agenteschat/ui/widgets/spec";
 
-const MAX = 80;
-
-function short(v: unknown): string | undefined {
-  if (typeof v !== "string") return undefined;
-  const t = v.replace(/\s+/g, " ").trim();
-  if (!t) return undefined;
-  return t.length > MAX ? `${t.slice(0, MAX - 1)}…` : t;
-}
-
-/** "https://shop.example/checkout?token=…" → "shop.example/checkout". */
-function siteOf(v: unknown): string | undefined {
-  if (typeof v !== "string") return undefined;
-  const m = /^https?:\/\/([^/?#\s]+)([^?#\s]*)/i.exec(v.trim());
-  if (!m) return undefined;
-  const host = (m[1] ?? "").replace(/^[^@]*@/, "").toLowerCase();
-  const path = (m[2] ?? "").replace(/\/$/, "");
-  return short(`${host}${path}`);
-}
+export { maskCredentials, maskSecrets, redactCredentials };
 
 function issueRef(v: unknown) {
   const t = short(v);
@@ -38,6 +23,9 @@ function issueRef(v: unknown) {
   const n = /^#?(\d+)$/.exec(t);
   return n ? `#${n[1]}` : t;
 }
+
+/** A computer brain's step detail (`tool_started.detail`), as people may read it: the runner masked it, this does again. */
+export const stepDetail = (detail: string | undefined) => (detail ? short(redactCredentials(detail)) : undefined);
 
 /** What a permission check (`permission_prompt`) asks about; null when the runner asks again (`request_id` only). */
 function promptAsked(i: Record<string, unknown>): { tool: string; input: Record<string, unknown> } | null {
@@ -74,39 +62,11 @@ export function promptAnswer(content: string): {
   }
 }
 
-/** Parts of a command line that only set up the next one (`cd repo && npm test`). */
-const SETUP = new Set(["cd", "pushd", "popd", "export", "source", ".", "set", "unset"]);
-/** Where a command's own words end: an option or a redirection. */
-const OPTION = /^-|[<>]/;
-/** A path or a web address: the only word after an option that can be a command's main argument. */
-const PLACE = /^(?:\.{0,2}\/|~\/|[a-z][a-z0-9+.-]*:\/\/)/i;
-
-/**
- * A command line, credentials already masked, in a few words: its first program (past `cd` and the like, wrappers
- * and env assignments left out) and its main argument, the words before its first option ("npm run build", "git
- * commit"), else its first path or web address ("rm /etc/x", "curl api.example.com/v1"). Never another word after
- * an option, which could be that option's value; a web address keeps its site and path only.
- */
-function commandGist(masked: string): string | undefined {
-  for (const argv of commandWords(masked)) {
-    const start = argv.findIndex((w) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(w));
-    if (start < 0) continue;
-    const [program = "", ...rest] = normalizedCommand(argv.slice(start)).split(" ");
-    if (!program || SETUP.has(program)) continue;
-    const options = rest.findIndex((w) => OPTION.test(w));
-    const lead = rest.slice(0, Math.min(options < 0 ? rest.length : options, 2));
-    const args = lead.length > 0 ? lead : rest.filter((w) => PLACE.test(w)).slice(0, 1);
-    return [program, ...args].map((w) => siteOf(w) ?? w).join(" ");
-  }
-  return undefined;
-}
-
 /** A permission check's label: Claude Code's own one-line description of the command, else the command in a few words. */
 function promptLabel(i: Record<string, unknown>): string | undefined {
   const asked = promptAsked(i);
   if (!asked) return undefined;
-  const said = typeof asked.input.description === "string" ? short(redactCredentials(asked.input.description)) : "";
-  return said || short(commandGist(redactCredentials(commandOf(asked.tool, asked.input))));
+  return commandLabel(commandOf(asked.tool, asked.input), asked.input.description);
 }
 
 /** The whole command a permission check (`permission_prompt`) is about, as one line, credentials masked. */
@@ -143,8 +103,18 @@ export function toolDetail(name: string, input: Record<string, unknown> | undefi
       return short(i.title);
     case "update_artifact":
       return short(i.title);
-    case "run_code":
-      return short(i.language);
+    // What it looks up on the web or fetches: the term, or the site (never the address's query string, which can carry tokens).
+    case "web_search":
+      return short(redactCredentials(typeof i.query === "string" ? i.query : ""));
+    case "web_fetch": {
+      const site = siteOf(i.url);
+      return site ? short(redactCredentials(site)) : undefined;
+    }
+    // The code's first line says more than its language does ("import pandas as pd").
+    case "run_code": {
+      const first = typeof i.code === "string" ? i.code.split("\n").find((l) => l.trim() !== "") : undefined;
+      return short(first ? redactCredentials(first) : i.language);
+    }
     case "write_file":
     case "read_file":
     case "list_files":
@@ -202,11 +172,6 @@ export async function artifactToolDetail(
   return a && a.channelId === channelId ? short(a.title) : undefined;
 }
 
-/** Things that look like credentials, masked in previews and live output (agents should never have any). */
-const SECRET = new RegExp(`${KEY_SHAPES.source}|${SIGNED_SHAPES.source}`, "g");
-
-export const maskSecrets = (text: string) => text.replace(SECRET, "••••");
-
 /** `text` with each of `values` masked wherever it appears, the longest first: secrets known by value, of any shape. */
 export const maskValues = (text: string, values: readonly string[]) =>
   values
@@ -222,11 +187,6 @@ export function carriesCredential(value: unknown): boolean {
   const text = typeof value === "string" ? value : (JSON.stringify(value) ?? "");
   return PRIVATE_KEY.test(text) || text.replace(SECRET, "") !== text;
 }
-
-const PRIVATE_KEY_BLOCK = /-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(-----END [A-Z ]*PRIVATE KEY-----|$)/g;
-
-/** `maskSecrets`, private keys too (from their first line on): text people read that must hold none. */
-export const maskCredentials = (text: string) => maskSecrets(text).replace(PRIVATE_KEY_BLOCK, "••••");
 
 /** `maskCredentials`, except a credential that appears word for word in `pasted` (what people wrote themselves). */
 export const maskCredentialsExcept = (text: string, pasted: string) => {
@@ -265,37 +225,6 @@ export function scrubSignIns(text: string, note: string): { text: string; found:
     .replace(SIGN_IN_SHAPES, hit);
   return { text: out, found };
 }
-
-/**
- * An address's user and password (`postgres://user:pass@host`), found from its `://` with its scheme checked behind
- * it. Looked for from each letter a scheme could start at, one long word of dots or dashes costs the square of its
- * length.
- */
-const USERINFO = /:\/\/(?<=\b[a-z][a-z0-9+.-]*:\/\/)[^\s/?#@'"]+@/gi;
-/** In a list of arguments kept as text, what stands between one and the next (`","`), up to the next one's quote. */
-const NEXT_ARGUMENT = String.raw`\\*["']\s*,\s*`;
-/**
- * The value after an option named for a secret (`--password hunter2`, `--api-key k`), a quoted one whole, also where
- * its quotes are written with backslashes: the option may open a quoted command (`sh -c "--token …"`), and a command
- * kept in JSON has its quotes written so. In a list of arguments kept as text, the value is the next one
- * (`"--password","…"`). Never a number after a name in the plural, which sets a count (`--max-tokens 4096`), also
- * with what closes or ends its command right after it (`$(llm --max-tokens 4096)`, `--max-tokens 4096; echo`).
- *
- * The first lookahead lets an option through only where a value follows its name. Without it, in one long word after
- * `--` every `token` is tried as the name's last and the rest of the word read again: the square of its length.
- */
-const SECRET_OPTION = new RegExp(
-  String.raw`(?<![^\s"'])(?=--?[\w-]+(?:\s+[^\s-]|${NEXT_ARGUMENT}\\*["'][^-]))--?(?![\w-]*s(?:\s+|${NEXT_ARGUMENT}\\*["'])\d+[)\]};|&<>,.]*(?![^\s"'\\]))[\w-]*(?:password|passwd|secret|token|api[_-]?key)[\w-]*(?:\s+|${NEXT_ARGUMENT}(?=\\*["']))(?=[^\s-])`,
-  "gi",
-);
-
-/**
- * `maskCredentials`, an address's user and password (`postgres://***@host`, first: `redactCommon` would read a
- * `token:` there as a value to mask up to the next space), the shapes `redactCommon` knows (bearer headers,
- * `token=` values) and the value after a secret-named option (`--password ***`): text that leaves its place.
- */
-export const redactCredentials = (text: string) =>
-  maskValuesAfter(redactCommon(maskCredentials(text).replace(USERINFO, "://***@")), SECRET_OPTION);
 
 /** An absolute path two parts deep or more (`/home/ada/x.jsonl`, `~/x/y`, `C:\Users\x`), never a URL's. */
 const ABSOLUTE_PATH = /(?<![\w:/.~\\-])(?:~|[A-Za-z]:)?(?:[\\/][^\s\\/:"'()<>,;]+){2,}[\\/]?/g;

@@ -161,6 +161,8 @@ export interface LiveRun {
 export interface LiveStep {
   said?: string;
   tool?: string;
+  /** What its own call works on ("src/x.ts"), from the runner: the step line names it after the verb. */
+  detail?: string;
 }
 
 export type LiveWork =
@@ -300,6 +302,8 @@ export interface AgentStepEvent {
   agentId: string;
   tool: string;
   said?: string | null;
+  /** What the call works on ("src/x.ts", "git status"), when the runner says. */
+  detail?: string | null;
 }
 
 export interface StreamsState {
@@ -583,7 +587,13 @@ function applyEvent(state: StreamsState, event: StreamEvent): StreamsState {
     }
     case "agent.step": {
       if (state.finished[event.runId] || !state.runs[event.runId]) return state;
-      return upsert(state, event, { step: { tool: event.tool, ...(event.said ? { said: event.said } : {}) } });
+      return upsert(state, event, {
+        step: {
+          tool: event.tool,
+          ...(event.said ? { said: event.said } : {}),
+          ...(event.detail ? { detail: event.detail } : {}),
+        },
+      });
     }
     case "agent.tool.output": {
       if (state.finished[event.runId]) return state;

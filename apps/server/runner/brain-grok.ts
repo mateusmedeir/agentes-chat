@@ -348,6 +348,7 @@ export async function runGrokTurn(input: GrokTurnInput, opts: GrokTurnOptions): 
       ...(input.chat ? { locked: true } : {}),
     });
     const parser = new ClaudeStreamParser();
+    parser.folder = input.cwd;
     parser.beginTurn();
     let child: ChildProcess;
     try {

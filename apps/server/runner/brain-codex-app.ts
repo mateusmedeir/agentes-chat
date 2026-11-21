@@ -7,6 +7,7 @@ import path from "node:path";
 import { createInterface } from "node:readline";
 import type { CommandProfile, CommandScope } from "@agenteschat/adapters/command-policy";
 import { type BrainSteerReply, type BrainSteerRequest, isBrainEffort } from "@agenteschat/adapters/machine-protocol";
+import { commandLabel, shortLine } from "@agenteschat/adapters/step-detail";
 import { accountEnv, withoutContainers, yieldRoute } from "./accounts";
 import { awakeClock } from "./awake";
 import {
@@ -25,6 +26,7 @@ import {
   codexSandbox,
   codexThreadKey,
   shellScript,
+  unwrapShell,
 } from "./brain-codex";
 import { CODEX_WINDOWS_CONFIG, codexLaunch } from "./codex-windows";
 import { killTree } from "./exec";
@@ -537,6 +539,25 @@ export class CodexAppMapper {
     if (!delta) return "";
     this.sent.add(itemId);
     return this.textOf(itemId, delta);
+  }
+
+  /**
+   * `item/started` of a command or a file change: what it works on (the command in a few words, the first file it
+   * changes), so the step line says it while the call runs. Nothing when the item doesn't carry it yet.
+   */
+  started(item: Record<string, unknown>): CodexBrainEvent | null {
+    const id = str(item.id);
+    if (!id) return null;
+    if (item.type === "commandExecution") {
+      const detail = commandLabel(this.clean(unwrapShell(str(item.command))), undefined);
+      return detail ? { type: "tool_started", id, name: "shell", detail } : null;
+    }
+    if (item.type === "fileChange") {
+      const first = (Array.isArray(item.changes) ? item.changes : []).find((c: unknown) => isObj(c) && str(c.path));
+      const detail = isObj(first) ? shortLine(this.clean(this.rel(str(first.path)))) : undefined;
+      return detail ? { type: "tool_started", id, name: "file_change", detail } : null;
+    }
+    return null;
   }
 
   /** `item/completed`: executed tool calls, the answer, and the text of a message that wasn't streamed. */
@@ -1381,6 +1402,11 @@ export class CodexAppServers implements CodexAppRunner {
             // An image takes a while and says nothing until it is done: its call starts now (the chat shows its place).
             if (method === "item/started" && item.type === "imageGeneration" && str(item.id)) {
               emit({ type: "tool_started", id: str(item.id), name: "image_generation" });
+              return;
+            }
+            if (method === "item/started") {
+              const began = mapper.started(item);
+              if (began) emit(began);
               return;
             }
             if (method !== "item/completed") return;

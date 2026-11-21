@@ -391,7 +391,14 @@ import { personAskedLately, rerootRun, runStretchOf } from "./stretch";
 import { isStuck, noteStep, STUCK_END_NOTE, STUCK_END_REPLY_NOTE, STUCK_NOTE, type StuckState } from "./stuck";
 import { archivedAgentsPrompt, FIND_AGENT_TOOL, renamedAgentsPrompt, teammateMeans } from "./team";
 import { linkRunChecks, runChecksForReply } from "./team-actions";
-import { carriesCredential, cliErrorWords, maskCredentials, maskCredentialsExcept, scrubSignIns } from "./tool-detail";
+import {
+  carriesCredential,
+  cliErrorWords,
+  maskCredentials,
+  maskCredentialsExcept,
+  scrubSignIns,
+  stepDetail,
+} from "./tool-detail";
 import { chooseToolGroups, keptToolGroups, recentForJudge, type ToolGroupChoice } from "./tool-loading";
 import {
   EVERY_TOOL,
@@ -5202,14 +5209,16 @@ async function executeRunInner(
       /** Its own calls whose step line went out as they started (`tool_started`): not again as they end. */
       const stepTold = new Set<string>();
       /** A call of its own (not ours through the bridge, which says its step as it starts) is the step line now. */
-      const ownStep = (call: { id: string; name: string }) => {
+      const ownStep = (call: { id: string; name: string; detail?: string }) => {
         if (run.background || turnTools.some((t) => t.name === call.name)) return;
         const said = takeStepWords(run.id);
+        const detail = stepDetail(call.detail);
         void publishChannelEvent(deps.pubsub, {
           type: "agent.step",
           ...where,
           tool: call.name,
           ...(said ? { said } : {}),
+          ...(detail ? { detail } : {}),
         }).catch(() => {});
       };
       // Context budget: a request that wouldn't fit the model's window sends old tool results as a
@@ -6775,7 +6784,7 @@ async function thinkOnce(
     /** A call the brain already ran (through the bridge, or its own tools). */
     onExecuted?(call: { id: string; name: string; input: unknown; result?: ToolResult }): void;
     /** A call of its own the brain started (`tool_started`): its `onExecuted` follows. */
-    onStarted?(call: { id: string; name: string }): void;
+    onStarted?(call: { id: string; name: string; detail?: string }): void;
     /** A file a tool of the brain's own made in the agent's folder (`file`). */
     onFile?(path: string): void;
     /** Messages handed to the turn mid-turn that it read (live steering). */

@@ -41,6 +41,7 @@ import {
   type WireBrainEvent,
 } from "@agenteschat/adapters/machine-protocol";
 import { errorLineOf } from "@agenteschat/adapters/redact";
+import { ownToolDetail } from "@agenteschat/adapters/step-detail";
 import {
   claudeCodeModel,
   PLAN_FORBIDDEN_TEXT,
@@ -439,6 +440,8 @@ export class ClaudeStreamParser {
    * the engine to read (`claude_failed`), never the key refused, which would sign out every agent on that key.
    */
   planKey = false;
+  /** The agent's folder: a path in a call's detail is shown relative to it (`ownToolDetail`). */
+  folder = "";
   /** The CLI says it is compacting the conversation (`system/status`), until it says otherwise or the boundary. */
   compacting = false;
   /** Blocks of the main conversation's answer that started streaming and haven't ended (`content_block_start`). */
@@ -594,12 +597,16 @@ export class ClaudeStreamParser {
           if (block.type === "tool_use" && str(block.id) && str(block.name)) {
             this.tools.set(str(block.id), { name: str(block.name), input: block.input ?? {} });
             // Ours run through the bridge, which tells the engine as they start.
-            if (!str(block.name).startsWith(OUR_TOOL_PREFIX))
+            if (!str(block.name).startsWith(OUR_TOOL_PREFIX)) {
+              // What it works on, built and masked here: its input never crosses the wire (a connector's stays out).
+              const detail = isObj(block.input) ? ownToolDetail(str(block.name), block.input, this.folder) : undefined;
               events.push({
                 type: "tool_started",
                 id: str(block.id),
                 name: str(block.name).slice(0, BRAIN_LIMITS.toolName),
+                ...(detail ? { detail } : {}),
               });
+            }
           } else if (block.type === "text" && str(block.text) && !streamed) {
             // No partial messages (an older Claude Code): the whole text block at once.
             events.push({ type: "text_delta", text: str(block.text) });
@@ -3119,6 +3126,7 @@ export class BrainManager {
       proc.onControl = (subtype) => this.log(`[${ctx.agent.handle}] refused the CLI's control_request ${subtype}`);
     }
     proc.parser.planKey = Boolean(plan);
+    proc.parser.folder = ctx.folder;
     // The bridge tells it when a call of its runs (`bridgeCall`): a turn waiting on us isn't silent.
     const entry = this.bridge.get(id);
     if (entry) entry.proc = proc;

@@ -132,7 +132,12 @@ test("a computer brain that tells its own call as it starts: the step line says 
     kind: "claude_code",
     async *run() {
       yield { type: "text_delta", text: "Vou rodar o build com a chave sk-ant-abcdefghijklmnopqrstuv. Demora." };
-      yield { type: "tool_started", id: "b1", name: "Bash" };
+      yield {
+        type: "tool_started",
+        id: "b1",
+        name: "Bash",
+        detail: "bun run build --token sk-ant-abcdefghijklmnopqrstuvwxyz0123",
+      };
       // The command still runs: what the line says now is what people see while it does.
       await new Promise((r) => setTimeout(r, 20));
       atStart = events.filter((e) => e.type === "agent.step");
@@ -159,5 +164,8 @@ test("a computer brain that tells its own call as it starts: the step line says 
   const steps = events.filter((e) => e.type === "agent.step");
   // Each call once, as it started; the silence word is never its words.
   expect(steps).toMatchObject([{ tool: "Bash" }, { tool: "Grep" }]);
+  // What it runs comes with the step, masked again here; a call that tells none (an older runner) has none.
+  expect((steps[0] as { detail?: string }).detail).toBe("bun run build --token ***");
+  expect((steps[1] as { detail?: string }).detail).toBeUndefined();
   expect((steps[1] as { said?: string }).said).toBeUndefined();
 });

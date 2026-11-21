@@ -220,7 +220,11 @@ test.skipIf(!posix)(
     // Only the app-server says the turn's model requests and the biggest one.
     const steps = (e: (typeof execAll)[number]) =>
       e.type === "usage" ? { ...e, calls: 1, maxContext: 200, lastContext: 200 } : e;
-    expect(notDeltas(second.events)).toEqual(notDeltas(execAll.map(steps)));
+    // Only the app-server tells a command as it starts, with what it runs (the step line says it then).
+    const began = second.events.filter((e) => e.type === "tool_started");
+    expect(began).toEqual([{ type: "tool_started", id: "c-1", name: "shell", detail: "npm test" }]);
+    const rest: unknown[] = notDeltas(second.events).filter((e) => e.type !== "tool_started");
+    expect(rest).toEqual(notDeltas(execAll.map(steps)));
     // Live text: the message that came whole, then the streamed one.
     expect(deltas(second.events)).toBe("I’ll check the folder now.\n\nDone: tests pass.");
     // One process, one thread; model and effort per turn (xhigh and max are high).
@@ -955,4 +959,32 @@ test("two different messages that read alike are both sent", () => {
     expect(m.completed({ id, type: "agentMessage", text: "Feito." }).text).toBeUndefined();
   }
   expect(sent.join("")).toBe("Feito.\n\nFeito.");
+});
+
+test("a command or a file change that starts tells what it works on, masked; an item with nothing to say tells nothing", () => {
+  const folder = tempDir("brain-codex-app-start-");
+  dirs.push(folder);
+  const m = new CodexAppMapper({ cwd: folder, folder, redact: (t) => t.replace("hunter2", "••••") });
+  expect(m.started({ id: "c1", type: "commandExecution", command: "/bin/bash -lc 'bun run build --silent'" })).toEqual({
+    type: "tool_started",
+    id: "c1",
+    name: "shell",
+    detail: "bun run build",
+  });
+  expect(m.started({ id: "c2", type: "commandExecution", command: "echo hunter2" })).toEqual({
+    type: "tool_started",
+    id: "c2",
+    name: "shell",
+    detail: "echo ••••",
+  });
+  expect(
+    m.started({
+      id: "f1",
+      type: "fileChange",
+      changes: [{ path: path.join(folder, "src/x.ts"), kind: { type: "update" } }],
+    }),
+  ).toEqual({ type: "tool_started", id: "f1", name: "file_change", detail: "src/x.ts" });
+  expect(m.started({ id: "c3", type: "commandExecution", command: "" })).toBeNull();
+  expect(m.started({ id: "f2", type: "fileChange", changes: [] })).toBeNull();
+  expect(m.started({ id: "u1", type: "userMessage" })).toBeNull();
 });

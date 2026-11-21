@@ -245,8 +245,11 @@ export type BrainEvent =
   | { type: "answer"; text: string }
   /** Fast failed (`message`: the provider's words) and this turn answered at standard speed. */
   | { type: "speed_fallback"; message: string }
-  /** A computer brain started a call of its own: shown only, its `tool_call` with `executed` follows. */
-  | { type: "tool_started"; id: string; name: string }
+  /**
+   * A computer brain started a call of its own: shown only, its `tool_call` with `executed` follows. `detail`: what it
+   * works on, masked by the runner (absent: an older runner).
+   */
+  | { type: "tool_started"; id: string; name: string; detail?: string }
   /** A file a tool of the brain's own made, in the agent's folder (Codex's image generation): shown with the reply. */
   | { type: "file"; path: string }
   /**

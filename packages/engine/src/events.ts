@@ -262,6 +262,8 @@ export type ChannelEvent =
       agentId: string;
       tool: string;
       said?: string;
+      /** What it works on, short and masked ("src/x.ts", "git status"), when the runner says (protocol 76). */
+      detail?: string;
     }
   /** What a computer command prints while it runs (throttled, ≤ 64 KB per call). */
   | {
